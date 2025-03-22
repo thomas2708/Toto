@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Jeu de Survie</title>
+    <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+    <style>
+        body {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+            background-color: #121212;
+            font-family: 'Press Start 2P', cursive;
+            overflow: hidden;
+        }
+
+        #gameCanvas {
+            border: 2px solid #ddd;
+            background-color: #222;
+            border-radius: 8px;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.5);
+            width: 95%;
+            max-width: 800px;
+            height: auto;
+            max-height: 600px;
+            aspect-ratio: 8 / 6;
+        }
+
+        #startButton, #muteButton {
+            margin-top: 1rem;
+            padding: 0.5rem 1rem;
+            font-size: 0.8rem;
+            color: #fff;
+            background-color: #4CAF50;
+            border: none;
+            cursor: pointer;
+            border-radius: 5px;
+            font-family: 'Press Start 2P', cursive;
+            transition: background-color 0.3s ease;
+            margin-left: 10px;
+        }
+
+        #startButton:hover, #muteButton:hover {
+            background-color: #45a049;
+        }
+
+        #message {
+            position: absolute;
+            color: #fff;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 1rem;
+            text-align: center;
+            background-color: rgba(0, 0, 0, 0.6);
+            padding: 1rem;
+            border-radius: 5px;
+            display: none;
+            z-index: 10;
+        }
+
+        @media screen and (max-width: 600px) {
+            #gameCanvas {
+                width: 98%;
+                max-width: 400px;
+                height: auto;
+            }
+
+            #startButton, #muteButton {
+                font-size: 0.7rem;
+                padding: 0.5rem;
+            }
+
+            #message {
+                font-size: 0.9rem;
+                padding: 0.8rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+    <div style="display: flex; align-items: center;">
+        <button id="startButton">Démarrer</button>
+        <button id="muteButton">Son Activé</button>
+    </div>
+    <div id="message"></div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const startButton = document.getElementById('startButton');
+        const messageElement = document.getElementById('message');
+        const muteButton = document.getElementById('muteButton');
+
+        let playerWidth = 30;  // Taille du joueur
+        let playerHeight = 30;
+        let playerX = (canvas.width - playerWidth) / 2;
+        let playerY = canvas.height - playerHeight - 10;
+        let hazardWidth = 20;    // Taille des dangers
+        let hazardHeight = 20;
+        let hazards = [];      // Tableau pour stocker les dangers
+        let score = 0;
+        let gameSpeed = 1;    // Vitesse du jeu réduite pour la survie
+        let animationId;
+        let isMuted = false;
+        let gameRunning = false;
+        let playerHealth = 100; // Points de vie du joueur
+        let resourceWidth = 20;
+        let resourceHeight = 20;
+        let resources = [];
+        let collectedResources = 0;
+        let resourceLimit = 10;
+
+        // Adjust canvas size
+        function resizeCanvas() {
+            canvas.width = document.querySelector('#gameCanvas').offsetWidth;
+            canvas.height = document.querySelector('#gameCanvas').offsetHeight;
+
+            const scaleX = canvas.offsetWidth / 800;
+            const scaleY = canvas.offsetHeight / 600;
+            ctx.scale(scaleX, scaleY);
+
+            canvas.originalWidth = 800;
+            canvas.originalHeight = 600;
+
+            playerWidth = 30;
+            playerHeight = 30;
+            playerX = (canvas.originalWidth - playerWidth) / 2;
+            playerY = canvas.originalHeight - playerHeight - 10;
+            hazardWidth = 20;
+            hazardHeight = 20;
+            resourceWidth = 20;
+            resourceHeight = 20;
+        }
+
+        resizeCanvas();
+
+        const hazardSpeedFactor = 1.05; // Augmentation plus lente de la vitesse des dangers
+        let hazardSpeedTimer = 0;
+        const speedIncreaseInterval = 10000; // Augmentation de la vitesse tous les 10 secondes
+
+        // --- Fonctions de jeu ---
+        function gameLoop() {
+            if (!gameRunning) return;
+
+            ctx.clearRect(0, 0, canvas.originalWidth, canvas.originalHeight);
+
+            drawPlayer();
+            drawHazards();
+            updateHazards();
+            drawResources();
+            updateResources();
+            if (checkCollision()) {
+                playerHealth -= 10; // Réduire les points de vie en cas de collision
+                if (playerHealth <= 0) {
+                    gameOver();
+                    return;
+                }
+            }
+            checkResourceCollection();
+            drawScore();
+            drawHealth(); // Afficher les points de vie du joueur
+
+            hazardSpeedTimer += deltaTime;
+            if (hazardSpeedTimer >= speedIncreaseInterval) {
+                gameSpeed *= hazardSpeedFactor;
+                hazardSpeedTimer = 0;
+            }
+
+            animationId = requestAnimationFrame(gameLoop);
+        }
+
+        // --- Fonctions de dessin ---
+        function drawPlayer() {
+            ctx.fillStyle = '#00FF00';
+            ctx.fillRect(playerX, playerY, playerWidth, playerHeight);
+        }
+
+        function drawHazards() {
+            hazards.forEach(hazard => {
+                ctx.fillStyle = '#FF0000';
+                ctx.fillRect(hazard.x, hazard.y, hazardWidth, hazardHeight);
+            });
+        }
+
+        function drawResources() {
+            resources.forEach(resource => {
+                ctx.fillStyle = '#FFFF00';
+                ctx.fillRect(resource.x, resource.y, resourceWidth, resourceHeight);
+                ctx.font = '10px "Press Start 2P"';
+                ctx.fillStyle = '#000000';
+                ctx.textAlign = 'center';
+                ctx.fillText(resource.count, resource.x + resourceWidth / 2, resource.y + resourceHeight / 2 + 3);
+            });
+        }
+
+        function drawScore() {
+            ctx.fillStyle = '#FFFFFF';
+            ctx.font = '1rem "Press Start 2P"';
+            ctx.shadowColor = 'rgba(0, 0, 0, 0.8)';
+            ctx.shadowOffsetX = 2;
+            ctx.shadowOffsetY = 2;
+            ctx.shadowBlur = 4;
+            ctx.fillText(`Score: ${score} | Ressources: ${collectedResources}`, 10, 20);
+            ctx.shadowBlur = 0;
+        }
+
+        function drawHealth() {
+            ctx.fillStyle = '#FFFFFF';
+            ctx.font = '1rem "Press Start 2P"';
+            ctx.shadowColor = 'rgba(0, 0, 0, 0.8)';
+            ctx.shadowOffsetX = 2;
+            ctx.shadowOffsetY = 2;
+            ctx.shadowBlur = 4;
+            ctx.fillText(`Vie: ${playerHealth}`, 10, 40); // Afficher les points de vie
+            ctx.shadowBlur = 0;
+        }
+
+        // --- Fonctions de mise à jour ---
+        function updateHazards() {
+            hazards.forEach(hazard => {
+                hazard.y += gameSpeed;
+            });
+            hazards = hazards.filter(hazard => hazard.y < canvas.originalHeight);
+            if (Math.random() < 0.02) { // Apparition moins fréquente des dangers
+                let hazardX = Math.random() * (canvas.originalWidth - hazardWidth);
+                hazards.push({ x: hazardX, y: -hazardHeight });
+            }
+        }
+
+        function updateResources() {
+            if (resources.length < 3 && Math.random() < 0.01) {
+                let resourceX = Math.random() * (canvas.originalWidth - resourceWidth);
+                let resourceY = Math.random() * (canvas.originalHeight / 2);
+                let count = Math.floor(Math.random() * resourceLimit) + 1;
+                resources.push({ x: resourceX, y: resourceY, count: count });
+            }
+        }
+
+        function checkCollision() {
+            for (let hazard of hazards) {
+                if (
+                    playerX < hazard.x + hazardWidth &&
+                    playerX + playerWidth > hazard.x &&
+                    playerY < hazard.y + hazardHeight &&
+                    playerY + playerHeight > hazard.y
+                ) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        function checkResourceCollection() {
+            for (let i = resources.length - 1; i >= 0; i--) {
+                let resource = resources[i];
+                if (
+                    playerX < resource.x + resourceWidth &&
+                    playerX + playerWidth > resource.x &&
+                    playerY < resource.y + resourceHeight &&
+                    playerY + playerHeight > resource.y
+                ) {
+                    collectedResources += resource.count;
+                    resources.splice(i, 1);
+                    if (!isMuted) {
+                        const synth = new Tone.Synth().toDestination();
+                        synth.triggerAttackRelease("C4", "8n");
+                    }
+                }
+            }
+        }
+
+        function gameOver() {
+            gameRunning = false;
+            cancelAnimationFrame(animationId);
+            showMessage('Game Over! Press Start to Play Again.');
+            hazards = [];
+            score = 0;
+            collectedResources = 0;
+            playerX = (canvas.originalWidth - playerWidth) / 2;
+            playerY = canvas.originalHeight - playerHeight - 10;
+            gameSpeed = 1;
+            hazardSpeedTimer = 0;
+            playerHealth = 100;
+             if (!isMuted) {
+                const synth = new Tone.Synth().toDestination();
+                synth.triggerAttackRelease("C2", "8n");
+            }
+        }
+
+        function startGame() {
+            if (!gameRunning) {
+                hideMessage();
+                gameRunning = true;
+                score = 0;
+                collectedResources = 0;
+                gameSpeed = 1;
+                hazardSpeedTimer = 0;
+                deltaTime = 0;
+                lastTime = performance.now();
+                playerHealth = 100;
+                resources = [];
+                gameLoop();
+            }
+        }
+
+        function showMessage(msg) {
+            messageElement.textContent = msg;
+            messageElement.style.display = 'block';
+        }
+
+        function hideMessage() {
+            messageElement.style.display = 'none';
+        }
+
+        function toggleMute() {
+            isMuted = !isMuted;
+            muteButton.textContent = isMuted ? 'Son Désactivé' : 'Son Activé';
+        }
+
+        // --- Gestion des événements ---
+        startButton.addEventListener('click', startGame);
+        muteButton.addEventListener('click', toggleMute);
+
+        // --- Gestion des entrées ---
+        const keys = {};
+
+        document.addEventListener('keydown', (e) => {
+            keys[e.key] = true;
+        });
+
+        document.addEventListener('keyup', (e) => {
+            keys[e.key] = false;
+        });
+
+        function updatePlayerPosition() {
+            if (keys['ArrowLeft'] && playerX > 0) {
+                playerX -= 5; // Déplacement plus lent
+            }
+            if (keys['ArrowRight'] && playerX < canvas.originalWidth - playerWidth) {
+                playerX += 5;
+            }
+            if (keys['ArrowUp'] && playerY > 0) {
+                playerY -= 5;
+            }
+            if (keys['ArrowDown'] && playerY < canvas.originalHeight - playerHeight) {
+                playerY += 5;
+            }
+        }
+
+        // --- Initialisation du jeu ---
+        let lastTime = performance.now();
+        let deltaTime = 0;
+
+        function updateGame() {
+            deltaTime = performance.now() - lastTime;
+            lastTime = performance.now();
+
+            if (gameRunning) {
+                updatePlayerPosition();
+                score += Math.floor(deltaTime / 100);
+            }
+
+            if (animationId) {
+                requestAnimationFrame(updateGame);
+            }
+        }
+
+        updateGame();
+        window.addEventListener('resize', resizeCanvas);
+    </script>
+</body>
+</html>
+
